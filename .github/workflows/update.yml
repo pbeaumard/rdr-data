@@ -1,0 +1,36 @@
+name: update-fleet
+
+on:
+  schedule:
+    # Toutes les heures à la minute 15 (les données officielles sortent vers h+05)
+    - cron: '15 * * * *'
+  workflow_dispatch: # bouton "Run workflow" pour lancer à la main
+
+permissions:
+  contents: write
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Installer le navigateur invisible
+        run: |
+          npm install --no-save playwright@1
+          npx playwright install --with-deps chromium
+
+      - name: Extraire les positions
+        run: node scrape.mjs
+
+      - name: Enregistrer fleet.json
+        run: |
+          git config user.name "fleet-bot"
+          git config user.email "fleet-bot@users.noreply.github.com"
+          git add docs/fleet.json
+          git commit -m "fleet $(date -u +%Y-%m-%dT%H:%MZ)" || echo "Pas de changement"
+          git push
