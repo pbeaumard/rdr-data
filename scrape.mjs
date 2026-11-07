@@ -21,16 +21,26 @@ await page.waitForFunction(
     { timeout: 120000 },
 );
 
-// Attendre que les traces soient chargées (sans bloquer si elles manquent)
+// Attendre que les traces soient COMPLÈTES : la page charge d'abord l'historique,
+// puis ajoute la partie récente à partir des pointages. On attend que la trace de
+// (presque) chaque bateau en course arrive à moins de 2 h du dernier pointage.
 try {
     await page.waitForFunction(
-        () => tracker._boats.filter(b => b.track && b.track.locations && b.track.locations.length > 1).length
-            >= tracker._boats.length * 0.8,
+        () => {
+            const tc = tracker.currentReport.timecode;
+            const racing = tracker.currentReport.lines.filter(l => l.racestatus === 'RAC');
+            const ok = racing.filter(l => {
+                const b = tracker._boatsByIds[l.boat];
+                const L = b && b.track && b.track.locations;
+                return L && L.length > 1 && L[L.length - 1].timecode >= tc - 7200;
+            });
+            return racing.length > 0 && ok.length >= racing.length * 0.95;
+        },
         null,
-        { timeout: 60000 },
+        { timeout: 120000, polling: 1000 },
     );
 } catch (e) {
-    console.log('Traces incomplètes, on continue avec ce qui est chargé');
+    console.log('Traces incomplètes après 2 min, on continue avec ce qui est chargé');
 }
 
 const data = await page.evaluate(step => {
@@ -50,6 +60,11 @@ const data = await page.evaluate(step => {
                 last = p.timecode;
             }
         });
+        // Sécurité : si la trace ne rejoint pas le bateau, la relier à sa position actuelle
+        const end = track[track.length - 1];
+        if (!end || Math.abs(end[0] - b.lat) > 0.01 || Math.abs(end[1] - b.lng) > 0.01) {
+            track.push([Math.round(b.lat * 1000) / 1000, Math.round(b.lng * 1000) / 1000]);
+        }
 
         return {
             id: b.id,
@@ -77,3 +92,7 @@ await mkdir('docs', { recursive: true });
 await writeFile('docs/fleet.json', JSON.stringify(data));
 const nPts = data.boats.reduce((n, b) => n + b.track.length, 0);
 console.log(`OK : ${data.boats.length} bateaux, ${nPts} points de trace, pointage ${data.updated}`);
+for (const b of data.boats.filter((x, i) => i % 20 === 0)) {
+    const e = b.track[b.track.length - 1];
+    console.log(`  ${b.name} : ${b.track.length} pts, fin (${e}) | bateau (${b.lat.toFixed(3)},${b.lon.toFixed(3)})`);
+}
